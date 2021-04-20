@@ -34,7 +34,7 @@ def rename_coords_lon_lat(ds):
     return(ds)
 
 
-def regrid_save_data(ds_in, ds_out, nc_out,):
+def regrid_data(ds_in, ds_out, ):
     
     ds_in = rename_coords_lon_lat(ds_in)
     
@@ -67,11 +67,22 @@ def regrid_save_data(ds_in, ds_out, nc_out,):
                 ds_in_regrid[k].attrs['cell_measures'] = ds_in[k].attrs['cell_measures']
             except KeyError:
                 continue
+    return(ds_in_regrid)
+#    ### Save to netcdf file
     
-    ### Save to netcdf file
-    
-    ds_in_regrid.to_netcdf(nc_out)
-    ds_in_regrid.close(); ds_in.close(); ds_out.close()
-    print('file written: .{}'.format(nc_out[29:]))
+ #   ds_in_regrid.to_netcdf(nc_out)
+  #  ds_in_regrid.close(); ds_in.close(); ds_out.close()
+   # print('file written: .{}'.format(nc_out[29:]))
 
 
+def regrid_through_level(ds_in, ds_out):
+    ds_in_regrid = xr.Dataset({
+        'level' : xr.DataArray(data = np.full(shape = 0, fill_value = np.nan),
+                               dims = ['level',] )
+    })
+    ### Regrid 
+    for i in ds_in.level.values:
+        _ds = fct.regrid_data(ds_in.sel(level = i), ds_out)
+        ds_in_regrid = xr.concat([ds_in_regrid, _ds], dim = 'level')
+        
+    return ds_in_regrid
