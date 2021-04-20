@@ -28,63 +28,161 @@ from imports import (np, xr, fct, glob, )
 # reload imports
 # %load_ext autoreload
 # %autoreload 2
+# -
+
+available_month = {
+                   '01':['01'],
+                   '02':['02'],
+                   '03':['03'],
+                   '04':['04'], 
+                   '05':['05'], 
+                   '06':['06'], 
+                   '07':['07'],
+                   '08':['08'], 
+                   '09':['09'], 
+                   '10':['10'], 
+                   '11':['11'], 
+                   '12':['12']
+                  }
+
+available_years = {
+                   "07": ['2007',],
+                   "08": ['2008',],
+                   "09": ['2009',],
+                   "10": ['2010',],
+                    }
 
 # +
-### Define data location for ERA5 and CMIP6
-
-era_path     = '/home/franzihe/nird_NS9600K/data/ERA5/3_hourly/2008/'
 
 ### Data location for file of reference grid
-cmip_path   = '/home/franzihe/nird_NS9600K/shofer/Rob/INP_nimax_fix/'
+#cmip_path   = '/home/franzihe/Documents/Python/regrid_global_data/'
+cmip_path   = './'#../../regrid_global_data/'
+
 variable = {
-#            '2t':   '2m_temperature', 
- #           'msr'  :'mean_snowfall_rate',
-            'sf'   :'snowfall',                         # ERA5 single level variables
-  #          't'   :'temperature',
-   #         'clwc':'specific_cloud_liquid_water_content',
-    #        'clic':'specific_cloud_ice_water_content',
-     #       'cswc':'specific_snow_water_content'        # ERA5 pressure level variables
+            'tp' :'total_precipitation',
+            'sf' :'snowfall',                          # ERA5 single level variables
+            't'   :'temperature',
+            'crwc':'specific_rain_water_content',
+            'cswc':'specific_snow_water_content',
+            'clwc':'specific_cloud_liquid_water_content',
+            'ciwc':'specific_cloud_ice_water_content'      # ERA5 pressure level variables
            }
 
 
-
-
-
-# -
-year = 2008
-
 # +
 ### Read in the regridder data (NorESM)
-cmip_file = sorted(glob('{}INP_fixed_nimax.cam.h2.2008*.nc'.format(cmip_path)))[0]
+cmip_file = sorted(glob('{}NorESM_2.5deg.nc'.format(cmip_path)))[0]
 ds_out = xr.open_dataset(cmip_file)
 
+counter = 0
 for keys, var in variable.items(): 
-    for month in np.arange(1,13):
-        if month == 1 or month == 3 or month == 5 or month == 7 or month == 8 or month == 10 or month == 12:
-            t = np.arange(1, 32)
-        elif month == 2:
-            t = np.arange(1, 30)
-        elif month == 4 or month == 6 or month == 9 or month == 11:
-            t = np.arange(1,31)
+    for years in (available_years):
+        ### Define data location for ERA5 and CMIP6
+        era_path     = '../../../data/ERA5/3_hourly/{}'.format(available_years[years][0])
+#        era_path     = '/home/franzihe/nird_NS9600K/data/ERA5/3_hourly/{}'.format(available_years[years][0])
 
-        if int(month) < 10:
-            month = '0{}'.format(int(month))
-        for day in t:
-            if int(day) < 10:
-                day = '0{}'.format(int(day))
-                
-            Date = '{}-{}-{}'.format(year, month, day)
+        for months in available_month:
+            nc_out = 'NorESMgrid/{}_3hourly_ERA5_{}{}.nc'.format(keys, available_years[years][0], available_month[months][0])
+            files = glob('{path}/{nc_out}'.format(path = era_path, nc_out = nc_out))
+
             
+            if '{path}/{nc_out}'.format(path = era_path, nc_out = nc_out) in files:
+                print('{path}/{nc_out} regridded'.format(path = era_path, nc_out = nc_out))
+                counter += 1
+                print("Have regridded in total : " + str(counter) + " files")
 
-            ### Input data from ERA5 with a resolution of 0.25x0.25 deg
-            era_file = glob('{}{}_3hourly_ERA5_2008{}.nc'.format(era_path, keys, month))[0]
-            ds_in = xr.open_dataset(era_file, ).sel(time = slice('{}'.format(Date)))
+            else:
+                ### Input data from ERA5 with a resolution of 0.25x0.25 deg
+                era_file = sorted(glob('{}/{}_3hourly_ERA5_{}{}_*.nc'.format(era_path, keys, available_years[years][0], available_month[months][0])))
+                if len(era_file) != 2:
+                    print('no files found: {}/{}_3hourly_ERA5_{}{}_*.nc'.format(era_path, keys, available_years[years][0], available_month[months][0]))
+                    continue
 
-            ### Regrid and save to file to nc_out
-            fct.createFolder('{}/NorESMgrid/'.format(era_file[:51]))
-            nc_out = '{}/NorESMgrid/{}_3hourly_ERA5_{}{}{}.nc'.format(era_file[:51], keys, year, month, day)
-            fct.regrid_save_data(ds_in, ds_out, nc_out,)
+                else:
+                    ds_in_S = xr.open_dataset(era_file[0])
+                    ds_in_N = xr.open_dataset(era_file[1])
+                    
+                    try:
+                        ds_in_S.indexes['level']
+                        ### assign variable name to ds_out
+                        ds_out = ds_out.assign({
+                            keys: xr.DataArray(
+                                data   = np.full(shape = (ds_in_S.level.shape[0], ds_in_S.time.shape[0], ds_out.lat.shape[0], ds_out.lon.shape[0]) , 
+                                                 fill_value = np.nan),   # enter data here
+                                dims   = ['level', 'time', 'lat', 'lon'],
+                                coords = {'level': ds_in_S.level, 'time': ds_in_S.time, 'lat': ds_out.lat, 'lon': ds_out.lon},
+                            ),},)
+
+                        ### regridding in each level
+                        ds_in_regrid_S = fct.regrid_through_level(ds_in_S, ds_out.sel(lat = slice(-90, -30)))
+                        ds_in_regrid_N = fct.regrid_through_level(ds_in_N, ds_out.sel(lat = slice(30, 90)))
+                    
+                    except KeyError:
+                        ### assign variable name to ds_out
+                        ds_out = ds_out.assign({
+                            keys: xr.DataArray(
+                                data   = np.full(shape = ( ds_in_S.time.shape[0], ds_out.lat.shape[0], ds_out.lon.shape[0]) , 
+                                                 fill_value = np.nan),   # enter data here
+                                dims   = ['time', 'lat', 'lon'],
+                                coords = {'time': ds_in_S.time, 'lat': ds_out.lat, 'lon': ds_out.lon},
+                            ),},)
+                        ### Regridding surface variables
+                        ds_in_regrid_S = fct.regrid_data(ds_in_S, ds_out.sel(lat = slice(-90, -30)))
+                        ds_in_regrid_N = fct.regrid_data(ds_in_N, ds_out.sel(lat = slice(30, 90)))
+
+
+
+                    ### concat all datasets 
+                    ds = xr.concat([ds_in_regrid_S, ds_out.sel(lat = slice(-30,30)), ds_in_regrid_N], dim = 'lat')
+                    ds.to_netcdf('{path}/{nc_out}'.format(path = era_path, nc_out = nc_out))
+
+                    ds_in_S.close(); ds_in_N.close(); ds_in_regrid_S.close(), ds_in_regrid_N.close();
+                    print('file written: {path}/{nc_out}'.format(path = era_path, nc_out = nc_out))
+# -
+
+
+
+
+
+
+
+
+
+
+
+
+
+# + active=""
+# ### Read in the regridder data (NorESM)
+# cmip_file = sorted(glob('{}NorESM_2.5deg.nc'.format(cmip_path)))[0]
+# ds_out = xr.open_dataset(cmip_file)
+# for keys, var in variable.items(): 
+#     for years in (available_years):
+#         ### Define data location for ERA5 and CMIP6
+#         era_path     = '/home/franzihe/nird_NS9600K/data/ERA5/3_hourly/{}/'.format(available_years[years][0])
+#
+#         for months in available_month:
+#
+#             
+#             ### Input data from ERA5 with a resolution of 0.25x0.25 deg
+#             era_file = sorted(glob('{}{}_3hourly_ERA5_{}{}_*.nc'.format(era_path, keys, available_years[years][0], available_month[months][0])))
+#             if len(era_file) != 2:
+#                 print('no files found: {}{}_3hourly_ERA5_{}{}_*.nc'.format(era_path, keys, available_years[years][0], available_month[months][0]))
+#                 continue
+#             else:
+#                 ds_in = xr.merge([xr.open_dataset(era_file[0]), xr.open_dataset(era_file[1])], )
+#
+#                 ### Regrid            
+#                 ds_in_regrid = fct.regrid_data(ds_in, ds_out, )
+#     
+#                 ### Save to netcdf file nc_out
+#                 nc_out = '{}/{}/NorESMgrid/{}_3hourly_EAR5_{}{}.nc'.format(era_file[0][:46], available_years[years][0], keys, available_years[years][0], available_month[months][0])
+#                 fct.createFolder(nc_out[:-25])
+#                 ds_in_regrid.to_netcdf(nc_out)
+#                 ds_in_regrid.close(); ds_in.close(); 
+#                 print('file written: .{}'.format(nc_out[-25:]))
 
 
 # -
+
 
